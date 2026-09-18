@@ -27,6 +27,7 @@ htmlcov/
 # Data (optional – keep sample files if needed)
 data/emission_tools/*
 data/tests/ADAVITA_tests/*
+emissiones.egg-info/*
 
 # Clean Up
 clean_up/*
