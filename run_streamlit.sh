@@ -16,6 +16,5 @@ docker build \
 echo "Starting Streamlit..."
 docker run --rm \
   -p 8501:8501 \
-  --env-file "$PROJECT_ROOT/.env" \
   -v "$PROJECT_ROOT/data:/app/data" \
   "$IMAGE_NAME"
