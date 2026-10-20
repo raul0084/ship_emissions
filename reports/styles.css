@@ -1,0 +1,53 @@
+/* Report styling: quiet, navy-on-white, one accent. System fonts only, so the
+   page renders identically offline and inside embedded HTML. */
+:root {
+  --ink: #0f2a43;
+  --teal: #1b7f8c;
+  --amber: #c9792b;
+  --rule: #e3e8ee;
+}
+
+body {
+  color: var(--ink);
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.6;
+}
+
+h1, h2, h3, .title {
+  font-family: "Iowan Old Style", "Palatino Linotype", Charter, Georgia, serif;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.25em;
+  margin-top: 2.2em;
+}
+
+.quarto-title-banner {
+  background: var(--ink);
+}
+.quarto-title-banner .title,
+.quarto-title-banner .subtitle,
+.quarto-title-banner .quarto-title-meta,
+.quarto-title-banner .quarto-title-meta-heading,
+.quarto-title-banner .quarto-title-meta-contents {
+  color: #f4f7fa;
+}
+
+a { color: var(--teal); }
+
+/* Tables: light rules, tabular numerals, no zebra */
+table { font-size: 0.92em; font-variant-numeric: tabular-nums; }
+thead th { border-bottom: 2px solid var(--ink) !important; font-weight: 600; }
+td, th { border-color: var(--rule) !important; }
+
+/* Callouts: keep Quarto defaults, soften the corners */
+.callout { border-radius: 4px; }
+
+/* Folded code should stay out of the way */
+details.code-fold > summary { color: var(--teal); font-size: 0.85em; }
+div.sourceCode { border-radius: 4px; }
+
+figcaption, .figure-caption { color: #5b6b7b; font-size: 0.88em; }

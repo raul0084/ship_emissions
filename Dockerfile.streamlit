@@ -1,0 +1,21 @@
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install the shared project dependencies
+COPY pyproject.toml .
+COPY core/ ./core/
+COPY app/ ./app/
+COPY app/styles/ ./app/styles/
+
+RUN pip install --no-cache-dir .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app/main.py", \
+     "--server.address=0.0.0.0", \
+     "--server.port=8501"]

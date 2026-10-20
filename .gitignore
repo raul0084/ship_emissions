@@ -1,37 +1,46 @@
-# Environment variables
-.env
 
-# Python cache
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python cache and compiled files
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 
 # Virtual environments
 venv/
-.env/
+.venv/
+env/
 
 # Jupyter
 .ipynb_checkpoints/
 
-# Pytest / coverage
+# Pytest and coverage
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # OS files
 .DS_Store
+Thumbs.db
 
-# IDEs
+# IDEs and editors
 .vscode/
 .idea/
 
-# Data (optional – keep sample files if needed)
+# Data exclusions
 data/emission_tools/*
 data/tests/ADAVITA_tests/*
-emissiones.egg-info/*
+data/tests/internal/*
 
-# Clean Up
+# Cleanup artifacts
 clean_up/*
 
-# Notebooks (optional)
+# Notebooks and generated files
 notebooks/
 file_structure.txt

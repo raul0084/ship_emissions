@@ -1,0 +1,652 @@
+---
+title: "Estimating Port-Call Ship Emissions"
+subtitle: "Estimating ship emissions from AIS data"
+date: today
+description: "An estimate of ship emissions using port calls and vessel info by combining vessel characteristics, port-call activity, and emission factors. It quantifies emissions by pollutant and operating mode, documents data quality and assumptions, and evaluates the sensitivity of results to key input parameters."
+date-format: "MMMM D, YYYY"
+lang: en
+
+params:
+  author: null
+  vessels: null
+  port_calls: null
+  max_stay_hours: 72
+  emission_factors: null
+  uncertainties: null
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    title-block-banner: true
+    toc: true
+    toc-depth: 2
+    toc-title: "On this page"
+    number-sections: true
+    smooth-scroll: true
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+    callout-appearance: simple
+    fig-format: svg
+    embed-resources: true
+    html-math-method: mathml
+
+jupyter: python3
+
+execute:
+  warning: false
+---
+
+```{python}
+#| label: parameters
+#| tags: [parameters]
+#| include: false
+
+author = "Unknown"
+vessels = "data/tests/vessels_2012.csv"
+port_calls = "data/tests/port_calls_2012.csv"
+max_stay_hours = 72
+emission_factors = None
+uncertainties = None
+```
+
+```{python}
+#| label: setup
+#| include: false
+
+import sys
+import warnings
+from importlib import metadata
+from pathlib import Path
+from types import SimpleNamespace
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+# ---- 1. Project setup ---------------------------------------------------
+
+sys.path.insert(0, str(Path.cwd()))
+
+import report_utils as ru
+
+ROOT = ru.find_project_root()
+ru.add_to_path(ROOT)
+
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module=r"core\.",
+)
+
+from core.config import (
+    default_emission_factors,
+    default_uncertainties,
+    validate_calls,
+    validate_vaixells,
+)
+from core.pipeline import run_pipeline
+
+ru.apply_style()
+
+
+# ---- 2. Read and validate report parameters -----------------------------
+
+def required_param(name: str, value) -> str:
+    if value is None or not str(value).strip():
+        raise ValueError(
+            f"Missing required Quarto parameter '{name}'. "
+            f"Pass it using -P {name}:value when rendering."
+        )
+    return str(value).strip()
+
+
+AUTHOR = required_param("author", author)
+VESSELS = required_param("vessels", vessels)
+PORT_CALLS = required_param("port_calls", port_calls)
+
+MAX_STAY_HOURS = float(max_stay_hours)
+
+if not np.isfinite(MAX_STAY_HOURS) or MAX_STAY_HOURS <= 0:
+    raise ValueError("max_stay_hours must be a positive number.")
+
+SENSITIVITY_THRESHOLDS = [24, 72, 168]
+MIN_MATCH_COVERAGE = 0.5
+
+EF = emission_factors or default_emission_factors()
+U = uncertainties or default_uncertainties()
+
+
+# ---- 3. Resolve paths and load input files ------------------------------
+
+def resolve_input_path(value: str) -> Path:
+    path = Path(value).expanduser()
+
+    if not path.is_absolute():
+        path = ROOT / path
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Input file not found: {path}")
+
+    return path
+
+
+vessels_path = resolve_input_path(VESSELS)
+port_calls_path = resolve_input_path(PORT_CALLS)
+
+df_calls, df_vessels = ru.load_inputs(
+    port_calls_path,
+    vessels_path,
+)
+
+
+# ---- 4. Validate input data ---------------------------------------------
+
+for name, df_in, validator in [
+    ("port calls", df_calls, validate_calls),
+    ("vessels", df_vessels, validate_vaixells),
+]:
+    ok, msg = validator(df_in)
+
+    if not ok:
+        raise ValueError(
+            f"Input validation failed for {name}: {msg}"
+        )
+
+
+# ---- 5. Calculate port-stay durations ----------------------------------
+
+df_dur = ru.add_stay_hours(df_calls)
+
+df_dur["duration_status"] = ru.classify_durations(
+    df_dur["port_stay_hours"],
+    MAX_STAY_HOURS,
+)
+
+
+# ---- 6. Run the pipeline once -------------------------------------------
+
+runnable = df_dur[
+    df_dur["port_stay_hours"].between(0, np.inf)
+].copy()
+
+df_all, kpis, df_unmatched = run_pipeline(
+    df_calls=runnable,
+    df_vessels=df_vessels.copy(),
+    EF=EF,
+    U=U,
+)
+
+ru.require_columns(
+    df_all,
+    [
+        "etautc",
+        "port_stay_hours",
+        "match_source",
+        "IMO",
+        "Vessel name",
+        "Terminal",
+        "Consignee",
+        "LOA range",
+    ],
+    "pipeline output",
+)
+
+
+# ---- 7. Define the main analysis set ------------------------------------
+
+df = df_all[
+    df_all["port_stay_hours"].le(MAX_STAY_HOURS)
+].copy()
+
+df["Vessel"] = ru.vessel_label(df)
+
+summary = ru.pollutant_summary(df).set_index("key")
+
+sens = ru.threshold_sensitivity(
+    df_all,
+    SENSITIVITY_THRESHOLDS,
+    MAX_STAY_HOURS,
+)
+
+sens_rel = ru.relative_to_baseline(
+    sens,
+    MAX_STAY_HOURS,
+).set_index("Max stay (h)")
+
+breakdown = ru.mode_breakdown(df)
+
+shares = (
+    ru.mode_shares(breakdown)
+    if not breakdown.empty
+    else pd.DataFrame()
+)
+
+CO2_COL = "CO2 total (t)"
+NOX_COL = "NOx total (t)"
+
+hours = df_dur["port_stay_hours"]
+
+ratio = (
+    df["CO2 total (t)"] / df["SFOC total (t)"]
+).replace([np.inf, -np.inf], np.nan).dropna()
+
+
+# ---- 8. Calculate figures quoted in the report --------------------------
+
+def n0(x):
+    return f"{x:,.0f}"
+
+
+def pct(x, nd=1):
+    return "n/a" if pd.isna(x) else f"{x:.{nd}f}"
+
+
+def signed(x):
+    return f"{x:+.1f}"
+
+
+lo_t = min(SENSITIVITY_THRESHOLDS)
+hi_t = max(SENSITIVITY_THRESHOLDS)
+
+sens_swing = max(
+    abs(sens_rel.loc[lo_t, "CO2"]),
+    abs(sens_rel.loc[hi_t, "CO2"]),
+)
+
+matched_share = 1 - ru.fallback_share(df)
+
+S = SimpleNamespace(
+    n_raw=n0(len(df_calls)),
+    n_in=n0(len(df)),
+    n_out=n0(len(df_calls) - len(df)),
+    pct_out=pct(
+        100 * (1 - len(df) / len(df_calls))
+        if len(df_calls)
+        else np.nan
+    ),
+    years=", ".join(
+        str(y)
+        for y in sorted(
+            df["etautc"].dt.year.dropna().unique().astype(int)
+        )
+    ),
+    co2=n0(summary.loc["CO2", "Total (t)"]),
+    co2_sigma=n0(summary.loc["CO2", "σ (t)"]),
+    co2_sigma_pct=pct(summary.loc["CO2", "σ (%)"], 2),
+    fuel=n0(summary.loc["SFOC", "Total (t)"]),
+    nox=n0(summary.loc["NOx", "Total (t)"]),
+    matched_pct=pct(100 * matched_share),
+    fallback_pct=pct(100 * (1 - matched_share)),
+    hot_share=(
+        pct(shares.loc["SFOC", "Hotelling"])
+        if "SFOC" in shares.index
+        and "Hotelling" in shares.columns
+        else "n/a"
+    ),
+    lo_t=lo_t,
+    hi_t=hi_t,
+    lo_chg=signed(sens_rel.loc[lo_t, "CO2"]),
+    hi_chg=signed(sens_rel.loc[hi_t, "CO2"]),
+    compare=(
+        "larger than"
+        if sens_swing > summary.loc["CO2", "σ (%)"]
+        else "smaller than"
+    ),
+    median_h=pct(hours.median()),
+    p95_h=pct(hours.quantile(0.95)),
+    max_h=n0(hours.max()),
+    max_years=pct(hours.max() / 8766),
+    ratio_text=(
+        f"is {ratio.min():.3f} t/t for every call"
+        if not ratio.empty and np.isclose(ratio.min(), ratio.max())
+        else (
+            f"ranges from {ratio.min():.3f} to "
+            f"{ratio.max():.3f} t/t across calls"
+            if not ratio.empty
+            else "is unavailable because no valid ratios were calculated"
+        )
+    ),
+    n_no_imo=n0(df["IMO"].isna().sum()),
+)
+```
+
+
+## Summary {.unnumbered}
+
+This report applies a bottom-up emissions method to `{python} S.n_raw` vessel port calls (`{python} S.years`) and checks how far the results can be trusted. Main results use the `{python} S.n_in` calls with a recorded stay of at most `{python} MAX_STAY_HOURS` hours.
+
+- **Totals.** Estimated CO₂ is `{python} S.co2` t, fuel consumption `{python} S.fuel` t and NOx `{python} S.nox` t.
+- **Vessel matching.** `{python} S.matched_pct`% of included calls matched a vessel record; the rest used fallback values.
+- **Operating mode.** Hotelling accounts for `{python} S.hot_share`% of fuel consumption.
+- **Duration cut-off.** Excluding stays over `{python} MAX_STAY_HOURS` h removes `{python} S.pct_out`% of calls. Moving the cut-off to `{python} S.lo_t` h changes CO₂ by `{python} S.lo_chg`%, and to `{python} S.hi_t` h by `{python} S.hi_chg`%. That swing is `{python} S.compare` the ±`{python} S.co2_sigma_pct`% uncertainty propagated from the model parameters.
+
+```{python}
+#| output: asis
+#| echo: false
+if matched_share < MIN_MATCH_COVERAGE:
+    print("::: {.callout-warning}")
+    print("## Most results below rest on default vessel data")
+    print(f"Only {S.matched_pct}% of the included port calls matched a vessel record. "
+          f"The other {S.fallback_pct}% were assigned fallback engine power, fuel and length "
+          "(see @tbl-fallbacks), so emissions per call are driven mainly by time in port, "
+          "not by the vessel's real characteristics. Read the totals as a demonstration of the "
+          "method on test data, not as an inventory.")
+    print(":::")
+```
+
+## Scope and approach
+
+The analysis estimates emissions per port call, by pollutant and operating mode, and then aggregates them. It reuses the calculation code in the project's `core/` package, so the report and the Streamlit application share one implementation.
+
+```{mermaid}
+%%| fig-align: center
+flowchart LR
+  A["port_calls.csv"] --> C["Validate"]
+  B["vessels.csv"] --> C
+  C --> D["Match vessel<br/>IMO, MMSI, name"]
+  D --> E["Durations<br/>per mode"]
+  E --> F["Emission factors<br/>by fuel and engine"]
+  F --> G["Emissions per call<br/>pollutant × mode"]
+  G --> H["Propagate<br/>uncertainty"]
+  H --> I["Quality checks<br/>and sensitivity"]
+```
+
+For each operating mode *m* (navigation, manoeuvring, hotelling) and pollutant *p*, the emission of one call has the usual bottom-up form:
+
+$$
+E_{p,m} = P_m \cdot LF_m \cdot t_m \cdot EF_{p,m}10^{-6}
+$$
+
+where $P_m$ is engine power (kW), $LF_m$ the engine load factor, $t_m$ the time in the mode (h), $EF_{p,m}$ the emission factor (g/kWh), and the divisor converts grams to tonnes. CO₂ is derived from fuel consumption with a carbon conversion factor. Emission factors come from `data/emission_factors.json` and relative uncertainties from `data/uncertainties.json`.
+
+Calls that cannot be matched to a vessel are kept and receive fallback values, so every call produces an estimate:
+
+```{python}
+#| label: tbl-fallbacks
+#| tbl-cap: "Fallback values used when a call cannot be matched to a vessel record."
+fallbacks = pd.DataFrame({
+    "Parameter": ["Main engine power", "Auxiliary engine power", "Gross tonnage field (p_gt)",
+                  "Fuel", "Vessel length", "Navigation time", "Manoeuvring time", "Hotelling time"],
+    "Fallback": ["10,000 kW", "2,000 kW", "5,000", "mdo/mgo", "100 m",
+                 "1 h (if not supplied)", "1.6 h (if not supplied)", "Departure minus arrival"],
+})
+ru.show_table(fallbacks)
+```
+
+## Input data
+
+Two CSV files are needed. Identifiers (IMO, MMSI) are read as strings so they are never reformatted.
+
+```{python}
+#| label: tbl-inputs
+#| tbl-cap: "Input files and validation result."
+inputs = pd.DataFrame({
+    "File": [Path(PORT_CALLS).name, Path(VESSELS).name],
+    "Contents": ["Port calls", "Vessel technical data"],
+    "Records": [len(df_calls), len(df_vessels)],
+    "Required columns": ["present", "present"],
+})
+ru.show_table(inputs, {"Records": "{:,}"})
+```
+
+::: {.callout-note collapse="true"}
+## Column reference
+
+**Port calls** (`port_calls.csv`). Required: `vaixellnom` (vessel name), `etautc` (arrival), `etdutc` (departure), `imo`, `mmsi`, `terminalnom`, `consignatari` (consignee). Optional: `eslora_metres` (length in m, takes priority over the vessel file), `nav_time` and `mani_time` (hours; default 1 and 1.6). Hotelling time is always recomputed from departure minus arrival.
+
+**Vessels** (`vessels.csv`). Required: `vaixellnom`, `imo`, `mmsi`, `fuel` (must match a configured emission-factor category), `p_main` and `p_aux` (kW), `p_gt` (gross tonnage), `eslora_metres` (m). Vessels are matched to calls by IMO, then MMSI, then normalised name.
+
+Validation only checks that required columns exist. Value validity, match success and emission-factor coverage are assessed in the next section.
+:::
+
+## Data quality
+
+### Vessel matching
+
+The pipeline records how each call was matched. Calls with source `default` received fallback vessel data.
+
+```{python}
+#| label: tbl-matching
+#| tbl-cap: "Included port calls by vessel match source."
+ru.show_table(ru.coverage_summary(df), {"Calls": "{:,}", "Share (%)": "{:.1f}"})
+```
+
+`{python} S.n_no_imo` included calls have no IMO number, which limits matching to MMSI or name.
+
+### Port-stay duration
+
+Hotelling time is computed from the arrival and departure timestamps, so errors in those timestamps flow straight into the emissions. The median stay is `{python} S.median_h` h and the 95th percentile `{python} S.p95_h` h, but the longest recorded stay is `{python} S.max_h` h (about `{python} S.max_years` years), which is almost certainly a record error.
+
+```{python}
+#| label: fig-stay-distribution
+#| fig-cap: "Recorded port-stay durations on a log scale. The solid line is the cut-off used for the main results; dashed lines are the sensitivity cut-offs."
+pos = hours[hours > 0]
+bins = np.logspace(np.log10(max(pos.min(), 0.1)), np.log10(pos.max()), 60)
+fig, ax = plt.subplots()
+ax.hist(pos, bins=bins, color=ru.INK)
+ax.set_xscale("log")
+for t in SENSITIVITY_THRESHOLDS:
+    ax.axvline(t, color=ru.MUTED, ls="--", lw=1)
+ax.axvline(MAX_STAY_HOURS, color=ru.AMBER, lw=2)
+ax.set_xlabel("Port stay (hours, log scale)")
+ax.set_ylabel("Port calls")
+plt.show()
+```
+
+```{python}
+#| label: tbl-duration-status
+#| tbl-cap: "Port calls by duration check."
+status = (df_dur["duration_status"].value_counts().rename_axis("Check").reset_index(name="Calls"))
+status["Share (%)"] = 100 * status["Calls"] / status["Calls"].sum()
+ru.show_table(status, {"Calls": "{:,}", "Share (%)": "{:.2f}"})
+```
+
+Calls with a missing or negative duration cannot be modelled and are dropped before the pipeline runs. Calls above the cut-off are excluded from the main results and revisited in the sensitivity analysis.
+
+## Results
+
+### Totals and propagated uncertainty
+
+```{python}
+#| label: tbl-totals
+#| tbl-cap: "Total emissions by pollutant with propagated 1σ uncertainty."
+ru.show_table(
+    summary.reset_index(drop=True)[["Pollutant", "Total (t)", "σ (t)", "σ (%)"]],
+    {"Total (t)": "{:,.2f}", "σ (t)": "{:,.2f}", "σ (%)": "{:.2f}"},
+)
+```
+
+Consistency check: CO₂ divided by fuel consumption `{python} S.ratio_text`. CO₂ should be a fixed multiple of fuel for each fuel type, so a range wider than the spread between fuel types would point to a problem.
+
+### Monthly profile
+
+```{python}
+#| label: fig-monthly
+#| fig-cap: "Monthly emissions for the selected pollutant. Use the menu to switch pollutant."
+monthly = (
+    df.assign(month=df["etautc"].dt.to_period("M").dt.to_timestamp())
+      .groupby("month")[ru.total_columns(df)].sum()
+)
+cols = ru.total_columns(df)
+default = cols.index(CO2_COL)
+fig = go.Figure()
+for i, c in enumerate(cols):
+    name = ru.label(ru.pollutant_name(c))
+    fig.add_trace(go.Scatter(x=monthly.index, y=monthly[c], mode="lines+markers", name=name,
+                             line=dict(color=ru.INK, width=2), marker=dict(size=6),
+                             visible=(i == default), showlegend=False,
+                             hovertemplate="%{x|%b %Y}: %{y:,.1f} t<extra></extra>"))
+fig.update_layout(
+    template="plotly_white", height=420, margin=dict(l=60, r=20, t=60, b=40),
+    yaxis=dict(title=f"{ru.label('CO2')} (t per month)", rangemode="tozero"),
+    updatemenus=[dict(
+        type="dropdown", x=0, y=1.18, xanchor="left", yanchor="top",
+        buttons=[dict(label=ru.label(ru.pollutant_name(c)), method="update",
+                      args=[{"visible": [j == i for j in range(len(cols))]},
+                            {"yaxis.title.text": f"{ru.label(ru.pollutant_name(c))} (t per month)"}])
+                 for i, c in enumerate(cols)])],
+)
+fig
+```
+
+### Emissions by operating mode
+
+```{python}
+#| output: asis
+#| echo: false
+if breakdown.empty:
+    candidates = [c for c in df.columns if any(k in str(c).lower() for k in ("nav", "mani", "hot"))]
+    print("::: {.callout-note}")
+    print("## Per-mode columns not found")
+    print("The pipeline output has no columns named like `E_nav_*`, `E_mani_*` or `E_hot_*`, "
+          "so the mode breakdown is skipped. Candidate columns: "
+          + ", ".join(f"`{c}`" for c in candidates) + ". Adjust the pattern in `report_utils.mode_breakdown`.")
+    print(":::")
+```
+
+```{python}
+
+if shares.empty:
+    print("No operating-mode data available to plot.")
+else:
+    mode_colors = {
+        "Navigation": ru.INK,
+        "Manoeuvring": ru.TEAL,
+        "Hotelling": ru.AMBER,
+    }
+
+    order = shares.index[::-1]
+
+    fig = go.Figure()
+
+    for mode in shares.columns:
+        fig.add_trace(
+            go.Bar(
+                y=[ru.label(p) for p in order],
+                x=shares.loc[order, mode],
+                name=mode,
+                orientation="h",
+                marker_color=mode_colors[mode],
+                customdata=breakdown.loc[order, mode],
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "Mode: " + mode + "<br>"
+                    "Share: %{x:.1f}%<br>"
+                    "Emissions / fuel: %{customdata:,.2f} t"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        barmode="stack",
+        xaxis={
+            "title": "Share of total (%)",
+            "range": [0, 100],
+            "ticksuffix": "%",
+        },
+        yaxis={"title": ""},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        height=max(400, 65 * len(order)),
+        margin={"l": 100, "r": 30, "t": 70, "b": 60},
+        template="plotly_white",
+    )
+
+    fig.show()
+```
+
+### Rankings
+
+Rankings show where CO₂ accumulates. When most calls use the same fallback engine data, differences between groups mostly reflect time in port and call counts, not engine size.
+
+::: {.panel-tabset}
+
+#### Vessel
+
+```{python}
+r = ru.rank_groups(df, "Vessel", CO2_COL)
+fig = ru.plot_ranking(r, "Vessel", "CO₂ (t)")
+plt.show()
+ru.show_table(r.reset_index(), {"Port calls": "{:,}", "Total (t)": "{:,.1f}",
+                                "Mean per call (t)": "{:,.2f}", "Share of total (%)": "{:.1f}"})
+```
+
+#### Terminal
+
+```{python}
+r = ru.rank_groups(df, "Terminal", CO2_COL)
+fig = ru.plot_ranking(r, "Terminal", "CO₂ (t)")
+plt.show()
+ru.show_table(r.reset_index(), {"Port calls": "{:,}", "Total (t)": "{:,.1f}",
+                                "Mean per call (t)": "{:,.2f}", "Share of total (%)": "{:.1f}"})
+```
+
+#### Consignee
+
+```{python}
+r = ru.rank_groups(df, "Consignee", CO2_COL)
+fig = ru.plot_ranking(r, "Consignee", "CO₂ (t)")
+plt.show()
+ru.show_table(r.reset_index(), {"Port calls": "{:,}", "Total (t)": "{:,.1f}",
+                                "Mean per call (t)": "{:,.2f}", "Share of total (%)": "{:.1f}"})
+```
+
+#### Vessel length
+
+```{python}
+r = ru.rank_groups(df, "LOA range", CO2_COL)
+fig = ru.plot_ranking(r, "Length overall", "CO₂ (t)")
+plt.show()
+ru.show_table(r.reset_index(), {"Port calls": "{:,}", "Total (t)": "{:,.1f}",
+                                "Mean per call (t)": "{:,.2f}", "Share of total (%)": "{:.1f}"})
+```
+
+:::
+
+## Sensitivity to the stay-duration cut-off
+
+The main results exclude stays longer than `{python} MAX_STAY_HOURS` h. Because hotelling time equals the recorded stay, this choice moves the totals directly.
+
+```{python}
+#| label: tbl-sensitivity
+#| tbl-cap: "Totals (t) by maximum-stay cut-off."
+fmt = {"Max stay (h)": "{:,.0f}", "Included calls": "{:,}", "Excluded (%)": "{:.2f}"}
+fmt.update({c: "{:,.1f}" for c in sens.columns if c not in fmt})
+ru.show_table(sens.rename(columns=ru.DISPLAY_NAMES), fmt)
+```
+
+```{python}
+#| label: fig-sensitivity
+#| fig-cap: "Change in each pollutant total relative to the main cut-off. The propagated parameter uncertainty (table above) is a small fraction of these changes."
+others = [t for t in sens_rel.index if t != MAX_STAY_HOURS]
+pollutants = list(sens_rel.columns)
+x = np.arange(len(pollutants))
+width = 0.8 / max(len(others), 1)
+fig, ax = plt.subplots()
+for i, t in enumerate(others):
+    color = ru.TEAL if t < MAX_STAY_HOURS else ru.AMBER
+    ax.bar(x + (i - (len(others) - 1) / 2) * width, sens_rel.loc[t, pollutants], width,
+           color=color, label=f"≤ {t:g} h")
+ax.axhline(0, color=ru.INK, lw=1)
+ax.set_xticks(x, [ru.label(p) for p in pollutants])
+ax.set_ylabel(f"Change vs ≤ {MAX_STAY_HOURS:g} h cut-off (%)")
+ax.grid(axis="x", visible=False)
+ax.legend(title="Cut-off")
+plt.show()
+```
+
+## Limitations and next steps
+
+- **Vessel coverage.** `{python} S.fallback_pct`% of included calls use fallback engine power, fuel and length. Until the vessel file covers the fleet, absolute totals and vessel-level rankings are indicative only.
+- **Long stays.** A hard cut-off treats genuine lay-ups and timestamp errors the same way. Capping hotelling time, or modelling lay-ups separately, would be more defensible.
+- **Uncertainty scope.** Propagated uncertainty covers parameter ranges only, and per-call sigmas are combined as independent errors. Shared inputs, such as one emission factor applied to every call, are fully correlated and do not average out, so the true relative uncertainty of a total is larger than reported.
+- **Emission factors.** Their sources and applicability to this fleet should be documented before the results inform decisions.

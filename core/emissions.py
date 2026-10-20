@@ -156,15 +156,3 @@ def calculate_uncertainty(df, U):
         )
 
     return df
-
-
-
-
-
-
-
-
-
-
-
-

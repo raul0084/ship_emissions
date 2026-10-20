@@ -1,0 +1,10 @@
+# Generated reports
+/archive/*.html
+!/archive/ship_emissions_report_test.html
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

@@ -6,9 +6,27 @@ import json
 SUPPORTED_TYPES = ["csv", "xlsx", "xls"]
 
 def load_css():
-    css_path = Path(__file__).resolve().parents[1] / "styles" / "style.css"
-    with open(css_path) as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    candidates = [
+        Path(__file__).resolve().parents[1] / "styles" / "style.css",
+        Path.cwd() / "app" / "styles" / "style.css",
+        Path("/app/app/styles/style.css"),
+    ]
+
+    css_path = next((path for path in candidates if path.is_file()), None)
+
+    if css_path is None:
+        st.warning(
+            "Stylesheet not found. Checked:\n"
+            + "\n".join(str(path) for path in candidates)
+        )
+        return False
+
+    with open(css_path, encoding="utf-8") as f:
+        st.markdown(
+            f"<style>{f.read()}</style>",
+            unsafe_allow_html=True,
+        )
+
     return True
 
 def load_file(file, validator=None):

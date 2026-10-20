@@ -1,3 +1,4 @@
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -5,7 +6,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "emissiones"
 version = "0.1.0"
+description = "Ship emissions estimation from port-call activity and vessel data."
 requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "plotly",
+    "jinja2",
+    "pyyaml",
+    "ipykernel",
+    "nbformat",
+    "nbclient",
+    "ipywidgets",
+    "papermill",
+    "sqlalchemy",
+    "streamlit",
+    "gpxpy",
+    "openpyxl",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

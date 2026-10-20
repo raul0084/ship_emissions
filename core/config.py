@@ -4,8 +4,21 @@ import json
 BASE_PATH = Path(__file__).resolve().parents[1]
 
 def load_json(name):
-    with open(BASE_PATH / "data" / name) as f:
-        return json.load(f)
+    candidates = [
+        Path.cwd() / "data" / name,
+        Path(__file__).resolve().parents[1] / "data" / name,
+        Path("/app/data") / name,
+    ]
+
+    for path in candidates:
+        if path.is_file():
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+
+    checked_paths = "\n".join(str(path) for path in candidates)
+    raise FileNotFoundError(
+        f"Could not find {name}. Checked:\n{checked_paths}"
+    )
 
 def default_emission_factors():
     return load_json("emission_factors.json")

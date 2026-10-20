@@ -1,86 +1,100 @@
-# Ship Emissions Modeling
+# Ship Emissions Modeling Using AIS Data
 
-Maritime transport is a significant source of atmospheric emissions, particularly around ports and densely trafficked coastal areas. Quantifying these emissions requires combining vessel movement information with environmental and operational parameters.
+A Python-based ship-emissions modeling and analysis tool developed from the work of two bachelor's theses at the *Departament de Dinàmica de la Terra i de l'Oceà, Universitat de Barcelona*.
 
-This project focuses on developing a more accessible and maintainable implementation of an existing ship-emissions modeling workflow.
+The project brings together research and modeling work into a maintainable software workflow for estimating ship emissions from vessel characteristics and port-call activity derived from Automatic Identification System (AIS) data. It combines data processing, emissions calculations, an interactive Streamlit application, and analytical reporting to make the model more accessible and facilitate the exploration of results.
 
-The original model was implemented in MATLAB. The main objective was to reproduce and reorganize its functionality in Python while creating an interface that allows users to interact with the model without directly working with the underlying code.
+## Objectives
 
-## Project Structure
+- Consolidate the modeling work developed through two bachelor's theses into a unified Python codebase.
+- Structure the model and data-processing logic into reusable components.
+- Provide an interactive interface for configuring inputs, running simulations, and exploring results.
+- Generate analytical reports presenting emissions estimates, data quality, and sensitivity analysis.
+- Support a more reproducible and accessible workflow through containerized application and reporting environments.
 
-```text
-project/
-│
-├── app/        # Streamlit application and UI components
-├── core/       # Model calculations and core functionality
-├── data/       # Input and processed data
-│
-├── pyproject.toml
-└── README.md
+## Using the Project
+
+The project offers two ways to work with the emissions model: an interactive Streamlit application and a Quarto-based reporting workflow.
+
+### 1. Interactive Application
+
+The Streamlit application provides a graphical interface for users who want to work with the model without directly modifying the code.
+
+Users can:
+
+- Navigate the application to explore the available tools and resources.
+- Load and inspect vessel and port-call data.
+- Configure and run emissions simulations.
+- Review results and use the available reporting and export functionality.
+
+To launch the application with Docker, configure a local `.env` file using `.env.example` as a reference, then run the following command from the project root:
+
+```bash
+./run_streamlit.sh
 ```
 
-### `app/`
+The application will be available at [http://localhost:8501](http://localhost:8501).
 
-Contains the Streamlit application and its UI components. This layer handles user interaction, model configuration, and displaying results.
+### 2. Analytical Reports
 
-### `core/`
+The project includes a Quarto report for presenting emissions estimates and supporting analysis in a structured document. The report covers emissions by pollutant and operating mode, together with data-quality and sensitivity analysis.
 
-Contains the main functionality of the project, including data processing and emissions calculations. This is the backend of the application and is independent from the Streamlit interface.
+First, build the report's Docker image:
 
-### `data/`
-
-Contains the datasets used by the project, including raw and processed data.
-
-## Data Processing
-
-The original AIS data was provided as CSV files. The CSV files were imported into a **PostgreSQL database**, where the data was cleaned and prepared for use by the model.
-
-The database workflow was used for tasks such as:
-
-* Data cleaning and validation
-* Filtering and organizing AIS records
-* Handling timestamps and voyage information
-* Preparing the data required by the emissions model
-
-The resulting dataset is then used by the Python modeling workflow.
-
-## Model
-
-The project translates an existing MATLAB ship-emissions model into Python. The goal is to reproduce the original calculations while separating the model logic from the user interface.
-While this data is for internal use only, the workflow for any user remains the same: upload CSV files with the port calls and vessel info, download generated and filtered reports.
-
-The general workflow is:
-
-```text
-AIS CSV files
-     ↓
-Data cleaning & preparation
-     ↓
-Python emissions model
-     ↓
-Results
-     ↓
-Download reports
+```bash
+docker build -f Dockerfile -t emissiones-report .
 ```
 
-## Technologies
+Then generate the report:
 
-* **Python** — model implementation and data processing
-* **PostgreSQL** — AIS data storage and cleaning
-* **Streamlit** — interactive application
-* **MATLAB** — original model implementation
-* **Git/GitHub** — version control
+```bash
+./render_report.sh
+```
 
-## Installation & Running
+The script accepts an output filename and paths to the vessel and port-call CSV files:
 
-Install the project dependencies using the `pyproject.toml` file:
+```bash
+./render_report.sh OUTPUT_FILE VESSELS_CSV PORT_CALLS_CSV
+```
+
+This workflow is useful when the results need to be reviewed or shared as a standalone analytical report.
+
+## Building on the Project
+
+The `core/` package contains the model and data-processing functionality, separated from the Streamlit interface. This separation allows developers and analysts to reuse the underlying Python modules in scripts, notebooks, or other applications.
+
+### Installation
+
+Install the project and its declared dependencies in a Python environment:
 
 ```bash
 pip install .
 ```
 
-Then run the Streamlit application:
+### Using the Python Modules
+
+The core modules can be imported directly into Python code:
+
+```python
+from core import emissions
+from core import data_handling
+```
+
+These imports expose the modules, not necessarily every function within them. The specific functions, arguments, and return values depend on their implementation.
+
+A typical programmatic workflow consists of:
+
+1. Loading and preparing vessel and port-call data.
+2. Applying the relevant data-processing functions.
+3. Running the emissions calculations with the required inputs and configuration.
+4. Inspecting, processing, or exporting the resulting estimates.
+
+For the available functions and their expected inputs and outputs, refer to the implementation in `core/`.
+
+Developers can also launch the Streamlit application directly, without Docker:
 
 ```bash
 streamlit run app/main.py
 ```
+
+The project can therefore serve both as an application for interactive emissions analysis and as a Python codebase that can be extended or integrated into other analytical workflows.

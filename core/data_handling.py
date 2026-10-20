@@ -310,13 +310,13 @@ def group_emissions(
 
         # emissions → sum
         emissions = (
-            df.groupby(group_cols)[pollutant_cols]
+            df.groupby(group_cols, observed=True)[pollutant_cols]
             .sum()
         )
 
         # uncertainty → sqrt(sum of squares)
         sigma = (
-            df.groupby(group_cols)[sigma_cols]
+            df.groupby(group_cols, observed=True)[sigma_cols]
             .apply(lambda x: np.sqrt((x**2).sum()))
         )
 

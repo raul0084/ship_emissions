@@ -55,13 +55,23 @@ def parse_gpx(file) -> pd.DataFrame:
 
 
 def _haversine_nm(lat1, lon1, lat2, lon2):
-    """Vectorized great-circle distance between paired points, in nautical miles."""
-    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    lat1, lon1, lat2, lon2 = [
+        np.radians(np.asarray(values, dtype=np.float64))
+        for values in (lat1, lon1, lat2, lon2)
+    ]
+
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    )
+
+    a = np.clip(a, 0.0, 1.0)
     c = 2 * np.arcsin(np.sqrt(a))
-    return EARTH_RADIUS_KM * c * NM_PER_KM
+
+    return c * 3440.065
 
 
 def route_distance_nm(points_df: pd.DataFrame) -> float:
